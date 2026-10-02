@@ -1,5 +1,11 @@
 # @e2e-dev/web
 
+## 0.11.3
+
+### Patch Changes
+
+- [#726](https://github.com/tester-army/e2e/pull/726) [`f7c0756`](https://github.com/tester-army/e2e/commit/f7c075666672d128f79ef2ec347fda67ea9e42ce) Thanks [@okwasniewski](https://github.com/okwasniewski)! - `locator.waitFor` adds Playwright's `attached` and `detached` states and refuses any other state, or an option key besides `state` and `timeout`, with `INVALID_ARGUMENT`. Before, every state but `visible` ran as `hidden`, so `waitFor({ state: 'attached' })` and a misspelled state passed at once on an absent node. `toBeHidden`, `toBeVisible({ visible: false })`, `toBeAttached({ attached: false })`, and `waitFor` `detached` and `hidden` read a locator under a frame missing from the document as zero matches instead of timing out waiting for the frame. `toHaveProperty` reads a primitive on the path through its wrapper, as Jest does, so `toHaveProperty('label.length', 3)` passes. `expect(browser).toHaveURL` takes `ignoreCase`, and `urlMatches` in `e2e/engine` takes it as an optional fourth argument.
+
 ## 0.11.2
 
 ### Patch Changes
