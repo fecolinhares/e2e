@@ -138,11 +138,12 @@ Copilot also lists models that `copilot()` cannot call, and marks them:
 - `no chat or responses`: Copilot serves the model only over APIs `copilot()`
   does not speak, such as Anthropic's Messages API, so pick another model.
 
-At call time `copilot()` picks the endpoint from the model's entry in this
-same listing: chat completions for most models, Copilot's Responses API for
-the ones served only there. The Responses call runs through
-`@ai-sdk/openai`, so install it beside `@ai-sdk/openai-compatible` to use
-those models.
+On its first call `copilot()` picks the endpoint from the model's entry in
+this same listing: chat completions for most models, Copilot's Responses API
+for the ones served only there. When the listing cannot be read, that call
+goes over chat completions and the next call reads it again. The Responses
+call runs through `@ai-sdk/openai`, so install it beside
+`@ai-sdk/openai-compatible` to use those models; `e2e init` adds both.
 
 ## Sign-in help
 
