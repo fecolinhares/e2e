@@ -212,41 +212,38 @@ export type CopilotProtocol = 'chat' | 'responses';
 
 /**
  * Which endpoint `copilot()` reaches `modelId` on, read from the Copilot
- * API's `GET /models`. Any doubt resolves to `chat`, the behavior before the
- * Responses API — so nothing that used to work can break: a lookup that
- * fails or is not JSON, a model the listing does not name, an entry without
- * `supported_endpoints`, and one that names `/chat/completions` all mean
- * chat. Responses is chosen only when the entry names it and nothing else
- * and Copilot marks the model enabled: an endpoint list alone must not
- * invent access a plan has not granted, and a model that is not enabled
- * keeps failing the way it does today. An aborted lookup is not a missing endpoint: it
- * rejects, so the caller learns the listing was never read.
+ * API's `GET /models`, or `undefined` when the listing could not be read
+ * (an error status, a body that is not JSON, the network, the signal), so
+ * the caller can ask again instead of remembering a guess. A model the
+ * listing does not name, or names with no endpoint `copilot()` speaks, is
+ * chat: the vendor's own error then explains it. A rejected login is not a
+ * missing listing and rejects.
  */
-export async function copilotProtocolFor(modelId: string, fetch: FetchFunction, signal?: AbortSignal): Promise<CopilotProtocol> {
+export async function copilotProtocolFor(modelId: string, fetch: FetchFunction, signal: AbortSignal): Promise<CopilotProtocol | undefined> {
   try {
-    // The ternary is the conditional-property idiom: `exactOptionalPropertyTypes` rejects an
-    // explicit `undefined`, and the linter rejects a redundant spread around it.
-    const response = await fetch(new Request(`${COPILOT_API_URL}/models`, signal === undefined ? {} : { signal }));
-    if (!response.ok) return 'chat';
+    const response = await fetch(new Request(`${COPILOT_API_URL}/models`, { signal }));
+    if (!response.ok) return undefined;
     const payload = (await response.json()) as { data?: unknown };
-    const models = Array.isArray(payload.data) ? (payload.data as CopilotModel[]) : [];
-    return copilotProtocol(models.find((model) => model.id === modelId)) ?? 'chat';
+    if (!Array.isArray(payload.data)) return undefined;
+    return copilotProtocol((payload.data as CopilotModel[]).find((model) => model.id === modelId)) ?? 'chat';
   } catch (error) {
-    if (signal?.aborted === true) throw error;
-    return 'chat';
+    if (error instanceof OAuthError) throw error;
+    return undefined;
   }
 }
 
 /**
  * The protocol one `/models` entry is served on, or `undefined` when
  * `copilot()` cannot call it. An entry that names no endpoints is chat, as
- * before; Responses needs the entry to name it and the plan to have enabled
- * the model.
+ * Copilot's older models are; chat completions wins when both are named, so
+ * a model that worked over chat keeps doing so. Whether the plan enabled the
+ * model is a separate question: Copilot rejects a disabled model the same
+ * way on either endpoint.
  */
 function copilotProtocol(model: CopilotModel | undefined): CopilotProtocol | undefined {
   const endpoints = model?.supported_endpoints;
   if (model === undefined || !Array.isArray(endpoints)) return 'chat';
   if (endpoints.includes('/chat/completions')) return 'chat';
-  if (endpoints.includes('/responses') && model.policy?.state === 'enabled') return 'responses';
+  if (endpoints.includes('/responses')) return 'responses';
   return undefined;
 }

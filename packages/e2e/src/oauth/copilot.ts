@@ -9,11 +9,16 @@
 
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { LanguageModelV4 } from '@ai-sdk/provider';
+import { OAuthError } from './errors.ts';
 import { createOAuthFetch } from './fetch.ts';
 import { USER_AGENT, loginHint } from './providers.ts';
 import { COPILOT_API_URL, copilotProtocolFor, createCopilotProvider, type CopilotProtocol } from './providers/github-copilot.ts';
 import { withoutServerStorage } from './responses.ts';
 import { defaultCredentialStore } from './store.ts';
+import type { FetchFunction } from './types.ts';
+
+/** How long the first call waits on the model listing before it calls over chat and asks again next time. */
+const LISTING_TIMEOUT_MS = 10_000;
 
 export function copilot(modelId: string): LanguageModelV4 {
   const fetch = createOAuthFetch(createCopilotProvider(), {
@@ -31,36 +36,52 @@ export function copilot(modelId: string): LanguageModelV4 {
   }).chatModel(modelId);
   return protocolDelegate(
     chat,
-    async () => {
-      // Imported only when a Responses model is called, so a chat-only project needs no @ai-sdk/openai install.
-      const { createOpenAI } = await import('@ai-sdk/openai');
-      return withoutServerStorage(createOpenAI({ apiKey: 'oauth', baseURL: COPILOT_API_URL, fetch, name: 'github-copilot' }).responses(modelId));
-    },
-    (signal) => copilotProtocolFor(modelId, fetch, signal),
+    () => responsesModel(modelId, fetch),
+    () => copilotProtocolFor(modelId, fetch, AbortSignal.timeout(LISTING_TIMEOUT_MS)),
   );
 }
 
 /**
- * A model that settles its Copilot protocol on the first call and delegates
- * to the model for it: chat completions, or the Responses API wrapped the way
- * the subscription backends need. The choice is cached, and a listing that
- * cannot be read resolves to chat, so the delegate never blocks construction
- * and never changes what used to work.
+ * The Responses model for `modelId`. `@ai-sdk/openai` is imported only here,
+ * so a project that calls only chat models needs no install of it.
  */
-function protocolDelegate(chat: LanguageModelV4, responses: () => Promise<LanguageModelV4>, choose: (signal: AbortSignal | undefined) => Promise<CopilotProtocol>): LanguageModelV4 {
-  let pending: Promise<LanguageModelV4> | undefined;
+async function responsesModel(modelId: string, fetch: FetchFunction): Promise<LanguageModelV4> {
+  let createOpenAI: typeof import('@ai-sdk/openai').createOpenAI;
+  try {
+    ({ createOpenAI } = await import('@ai-sdk/openai'));
+  } catch (cause) {
+    throw new OAuthError(
+      'MISCONFIGURED',
+      `GitHub Copilot serves ${modelId} only over its Responses API, which copilot() calls through @ai-sdk/openai; install it beside @ai-sdk/openai-compatible`,
+      { cause },
+    );
+  }
+  return withoutServerStorage(createOpenAI({ apiKey: 'oauth', baseURL: COPILOT_API_URL, fetch, name: 'github-copilot' }).responses(modelId));
+}
+
+/**
+ * A model that settles its Copilot protocol on the first call and delegates
+ * to the model for it. One lookup serves every concurrent call, under its
+ * own timeout, so a caller that gives up never fails the others. Only a
+ * listing that was read is remembered: when it could not be read, that call
+ * goes over chat, the endpoint most models use, and the next call asks again.
+ */
+function protocolDelegate(
+  chat: LanguageModelV4,
+  responses: () => Promise<LanguageModelV4>,
+  lookup: () => Promise<CopilotProtocol | undefined>,
+): LanguageModelV4 {
   let resolved: LanguageModelV4 | undefined;
-  const delegate = (signal: AbortSignal | undefined): Promise<LanguageModelV4> => {
-    // A choice that cannot be made must not be remembered: an aborted or failed lookup clears
-    // `pending` so the next attempt asks again, instead of every retry waiting on a promise
-    // that never settles. The signal reaches the lookup, so a stalled listing can be cancelled.
+  let pending: Promise<LanguageModelV4> | undefined;
+  const settle = (): Promise<LanguageModelV4> => {
+    if (resolved !== undefined) return Promise.resolve(resolved);
     pending ??= (async () => {
-      const protocol = await choose(signal);
+      const protocol = await lookup();
+      if (protocol === undefined) return chat;
       resolved = protocol === 'responses' ? await responses() : chat;
       return resolved;
-    })().catch((error: unknown) => {
+    })().finally(() => {
       pending = undefined;
-      throw error;
     });
     return pending;
   };
@@ -75,7 +96,18 @@ function protocolDelegate(chat: LanguageModelV4, responses: () => Promise<Langua
     get supportedUrls() {
       return resolved?.supportedUrls ?? chat.supportedUrls;
     },
-    doGenerate: async (options) => (await delegate(options.abortSignal)).doGenerate(options),
-    doStream: async (options) => (await delegate(options.abortSignal)).doStream(options),
+    doGenerate: async (options) => (await untilAborted(settle(), options.abortSignal)).doGenerate(options),
+    doStream: async (options) => (await untilAborted(settle(), options.abortSignal)).doStream(options),
   };
+}
+
+/** Waits for `promise` unless `signal` aborts first, leaving the shared promise running for other callers. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (signal === undefined) return promise;
+  if (signal.aborted) return Promise.reject(signal.reason as Error);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(signal.reason as Error);
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
 }

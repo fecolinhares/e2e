@@ -1,9 +1,8 @@
 import { generateText, tool } from 'ai';
 import { z } from 'zod';
 import { afterEach, describe, expect, it } from 'vitest';
-import { copilotBaseUrl, copilotProtocolFor, createCopilotProvider, enterpriseHost } from '../../../src/oauth/providers/github-copilot.ts';
 import { copilot } from '../../../src/oauth/copilot.ts';
-import { sendCopilotRequest } from '../../../src/oauth/providers/github-copilot.ts';
+import { copilotBaseUrl, copilotProtocolFor, createCopilotProvider, enterpriseHost, sendCopilotRequest } from '../../../src/oauth/providers/github-copilot.ts';
 import { echoUpstream, json, useServers, useVendor, type Echo, type Received } from './helpers/server.ts';
 
 const serve = useServers(afterEach);
@@ -133,16 +132,16 @@ describe('Copilot requests', () => {
       code: 'LOGIN_REQUIRED',
       message: 'GitHub Copilot rejected the stored token (401: Bad credentials); run `npx e2e login github-copilot`',
     });
-    // The model listing is asked once before the call; the rejected token is not retried.
-    expect(api.requests.filter((request) => request.url === '/chat/completions')).toHaveLength(1);
+    // The model listing meets the rejection first, so the call itself is never sent.
+    expect(api.requests.map((request) => request.url)).toEqual(['/models']);
   });
 
-  it('calls an enabled model Copilot lists only over Responses through the Responses API, with no server storage', async () => {
+  it('calls a model Copilot lists only over Responses through the Responses API, with no server storage', async () => {
     let seen: Received | undefined;
     const api = await serve((request, response) => {
       if (request.url === '/models') {
         json(response, 200, {
-          data: [{ id: 'gpt-6-luna', vendor: 'OpenAI', policy: { state: 'enabled' }, supported_endpoints: ['/responses', 'ws:/responses'], capabilities: { type: 'chat' } }],
+          data: [{ id: 'gpt-6-luna', vendor: 'OpenAI', supported_endpoints: ['/responses', 'ws:/responses'], capabilities: { type: 'chat' } }],
         });
         return;
       }
@@ -204,46 +203,80 @@ describe('Copilot requests', () => {
       { id: 'claude-fable-5.1', detail: 'Anthropic, not enabled' },
       { id: 'claude-messages', detail: 'Anthropic, no chat or responses' },
       { id: 'gpt-6-luna', detail: 'OpenAI' },
-      { id: 'gpt-5.5', detail: 'OpenAI, not enabled, no chat or responses' },
+      { id: 'gpt-5.5', detail: 'OpenAI, not enabled' },
     ]);
   });
 });
 
 describe('Copilot endpoint selection', () => {
-  it('rejects an aborted lookup instead of reading it as a missing endpoint', async () => {
-    const controller = new AbortController();
-    controller.abort();
-    // A fetch that honours the signal the way the real one does: aborted means rejected.
-    const onAbort = (request: Request) =>
-      request.signal.aborted ? Promise.reject(new Error('aborted')) : new Promise<Response>(() => {});
-    await expect(copilotProtocolFor('m', onAbort as never, controller.signal)).rejects.toThrow('aborted');
-    // Without a signal the same lookup would have been read as a missing endpoint.
-    expect(await copilotProtocolFor('m', (async () => new Response(JSON.stringify({ data: [] }), { status: 200 })) as never)).toBe('chat');
-  });
-
+  const signal = () => new AbortController().signal;
   const listing = (data: unknown, status = 200) => async () => new Response(JSON.stringify({ data }), { status, headers: { 'content-type': 'application/json' } });
   const entry = (supported: string[], policy?: { state: string }) => ({ id: 'm', ...(policy === undefined ? {} : { policy }), supported_endpoints: supported });
 
-  it('keeps a model that lists chat completions on chat, unchanged', async () => {
-    expect(await copilotProtocolFor('m', listing([entry(['/chat/completions', '/v1/messages'])]))).toBe('chat');
+  it('reads the endpoint from the entry alone, whatever the plan policy says', async () => {
+    expect(await copilotProtocolFor('m', listing([entry(['/responses', 'ws:/responses'])]), signal())).toBe('responses');
+    expect(await copilotProtocolFor('m', listing([entry(['/responses'], { state: 'enabled' })]), signal())).toBe('responses');
+    expect(await copilotProtocolFor('m', listing([entry(['/responses'], { state: 'disabled' })]), signal())).toBe('responses');
   });
 
-  it('routes an enabled model served only over Responses to the Responses API', async () => {
-    expect(await copilotProtocolFor('m', listing([{ id: 'm', policy: { state: 'enabled' }, supported_endpoints: ['/responses', 'ws:/responses'] }]))).toBe('responses');
-  });
-
-  it('falls back to chat whenever the endpoint cannot be established', async () => {
-    const cases: Array<[string, unknown, number]> = [
-      ['chat named beside responses', [entry(['/responses', '/chat/completions'], { state: 'enabled' })], 200],
-      ['no supported_endpoints', [{ id: 'm', policy: { state: 'enabled' } }], 200],
-      ['responses but not enabled', [entry(['/responses'], { state: 'disabled' })], 200],
-      ['responses with no policy at all', [entry(['/responses'])], 200],
-      ['another endpoint only', [entry(['/v1/messages'], { state: 'enabled' })], 200],
-      ['the model is not in the listing', [{ id: 'other', policy: { state: 'enabled' }, supported_endpoints: ['/responses'] }], 200],
-      ['the listing is not ok', [entry(['/responses'], { state: 'enabled' })], 500],
+  it('keeps chat for a model chat completions serves, one with no endpoints, and one the listing cannot place', async () => {
+    const cases: Array<[string, unknown]> = [
+      ['chat named', [entry(['/chat/completions', '/v1/messages'])]],
+      ['chat named beside responses', [entry(['/responses', '/chat/completions'])]],
+      ['no supported_endpoints', [{ id: 'm' }]],
+      ['another endpoint only', [entry(['/v1/messages'])]],
+      ['not in the listing', [{ id: 'other', supported_endpoints: ['/responses'] }]],
     ];
-    for (const [name, data, status] of cases) expect(await copilotProtocolFor('m', listing(data, status)), name).toBe('chat');
-    expect(await copilotProtocolFor('m', async () => { throw new Error('offline'); })).toBe('chat');
-    expect(await copilotProtocolFor('m', async () => new Response('not json'))).toBe('chat');
+    for (const [name, data] of cases) expect(await copilotProtocolFor('m', listing(data), signal()), name).toBe('chat');
+  });
+
+  it('answers undefined when the listing cannot be read, so nothing is remembered', async () => {
+    expect(await copilotProtocolFor('m', listing([entry(['/responses'])], 500), signal())).toBeUndefined();
+    expect(await copilotProtocolFor('m', async () => new Response('not json'), signal())).toBeUndefined();
+    expect(await copilotProtocolFor('m', async () => { throw new Error('offline'); }, signal())).toBeUndefined();
+    const aborted = new AbortController();
+    aborted.abort();
+    expect(await copilotProtocolFor('m', ((request: Request) => (request.signal.aborted ? Promise.reject(new Error('aborted')) : new Promise<Response>(() => {}))) as never, aborted.signal)).toBeUndefined();
+  });
+
+  it('asks the listing again after it could not be read, then remembers the answer', async () => {
+    let listings = 0;
+    const api = await serve((request, response) => {
+      if (request.url === '/models') {
+        listings += 1;
+        if (listings === 1) return json(response, 503, { message: 'busy' });
+        return json(response, 200, { data: [entry(['/responses'])] });
+      }
+      if (request.url === '/chat/completions') return json(response, 400, { error: { message: 'model "m" is not accessible via the /chat/completions endpoint', code: 'unsupported_api_for_model' } });
+      json(response, 200, { id: 'resp_1', created_at: 1, model: 'm', output: [{ type: 'message', id: 'msg_1', role: 'assistant', content: [{ type: 'output_text', text: 'ok', annotations: [] }] }], usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } });
+    });
+    vendor(api, { 'github-copilot': { access: 'gho_x', refresh: '', expires: 0 } });
+    const model = copilot('m');
+    await expect(generateText({ model, prompt: 'x', maxRetries: 0 })).rejects.toThrow('not accessible');
+    expect((await generateText({ model, prompt: 'x', maxRetries: 0 })).text).toBe('ok');
+    expect((await generateText({ model, prompt: 'x', maxRetries: 0 })).text).toBe('ok');
+    expect(api.requests.map((request) => request.url)).toEqual(['/models', '/chat/completions', '/models', '/responses', '/responses']);
+  });
+
+  it('lets one caller give up on the listing without failing the others waiting on it', async () => {
+    let release!: () => void;
+    const listed = new Promise<void>((resolve) => (release = resolve));
+    const api = await serve(async (request, response) => {
+      if (request.url === '/models') {
+        await listed;
+        return json(response, 200, { data: [{ id: 'm', supported_endpoints: ['/chat/completions'] }] });
+      }
+      json(response, 200, { id: 'c', object: 'chat.completion', created: 1, model: 'm', choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] });
+    });
+    vendor(api, { 'github-copilot': { access: 'gho_x', refresh: '', expires: 0 } });
+    const model = copilot('m');
+    const quitter = new AbortController();
+    const first = generateText({ model, prompt: 'x', maxRetries: 0, abortSignal: quitter.signal });
+    const second = generateText({ model, prompt: 'x', maxRetries: 0 });
+    quitter.abort(new Error('gave up'));
+    await expect(first).rejects.toThrow('gave up');
+    release();
+    expect((await second).text).toBe('ok');
+    expect(api.requests.filter((request) => request.url === '/models')).toHaveLength(1);
   });
 });
