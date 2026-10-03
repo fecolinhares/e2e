@@ -4,9 +4,11 @@
  * package, or a typo resolves on this checkout, where the workspace hoists
  * everything, and fails the first project to install the tarball. Optional
  * peers are stricter: `ai` is loaded lazily by one module and each
- * `@ai-sdk/*` provider by its one `e2e/oauth/*` constructor, so the CLI
- * boots (and `npx e2e init` runs) before any of them is installed, and the
- * mobile tool pack names `ai` in types only. Type imports erase and are
+ * `@ai-sdk/*` provider by the `e2e/oauth/*` constructor that wraps it, so the
+ * CLI boots (and `npx e2e init` runs) before any of them is installed, and
+ * the mobile tool pack names `ai` in types only. `copilot()` loads
+ * `@ai-sdk/openai` lazily too, only for the models Copilot serves over its
+ * Responses API. Type imports erase and are
  * exempt, as is the scaffold text `e2e init` writes from template literals.
  */
 
@@ -36,7 +38,7 @@ const SCOPES: readonly Scope[] = [
     dir: 'e2e',
     optionalPeerHomes: {
       ai: ['agent/ai-sdk.ts'],
-      '@ai-sdk/openai': ['oauth/chatgpt.ts'],
+      '@ai-sdk/openai': ['oauth/chatgpt.ts', 'oauth/copilot.ts'],
       '@ai-sdk/openai-compatible': ['oauth/copilot.ts'],
       '@ai-sdk/xai': ['oauth/grok.ts'],
     },

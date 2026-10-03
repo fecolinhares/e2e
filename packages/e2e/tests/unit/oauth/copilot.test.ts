@@ -1,7 +1,7 @@
 import { generateText, tool } from 'ai';
 import { z } from 'zod';
 import { afterEach, describe, expect, it } from 'vitest';
-import { copilotBaseUrl, createCopilotProvider, enterpriseHost } from '../../../src/oauth/providers/github-copilot.ts';
+import { copilotBaseUrl, copilotProtocolFor, createCopilotProvider, enterpriseHost } from '../../../src/oauth/providers/github-copilot.ts';
 import { copilot } from '../../../src/oauth/copilot.ts';
 import { sendCopilotRequest } from '../../../src/oauth/providers/github-copilot.ts';
 import { echoUpstream, json, useServers, useVendor, type Echo, type Received } from './helpers/server.ts';
@@ -102,6 +102,29 @@ describe('Copilot requests', () => {
     expect(seen!.headers['copilot-vision-request']).toBe('true');
   });
 
+  it('marks agent turns and image requests from a Responses body too', async () => {
+    const withImage = new Request('https://api.githubcopilot.com/responses', {
+      method: 'POST',
+      body: JSON.stringify({
+        model: 'gpt-6-luna',
+        input: [
+          { role: 'user', content: [{ type: 'input_text', text: 'x' }, { type: 'input_image', image_url: 'data:image/png;base64,AA==' }] },
+          { type: 'function_call_output', call_id: 'call_1', output: 'ok' },
+        ],
+      }),
+    });
+    const sent = (await (await sendCopilotRequest(withImage, { access: 'a', refresh: '', expires: 0, enterpriseUrl: 'gh.acme.com' }, echoUpstream)).json()) as Echo;
+    expect(sent.url).toBe('https://copilot-api.gh.acme.com/responses');
+    expect(sent.headers).toMatchObject({ 'x-initiator': 'agent', 'copilot-vision-request': 'true', 'openai-intent': 'conversation-edits' });
+    const plain = new Request('https://api.githubcopilot.com/responses', {
+      method: 'POST',
+      body: JSON.stringify({ model: 'gpt-6-luna', input: [{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }] }),
+    });
+    const sentPlain = (await (await sendCopilotRequest(plain, { access: 'a', refresh: '', expires: 0 }, echoUpstream)).json()) as Echo;
+    expect(sentPlain.headers['x-initiator']).toBe('user');
+    expect(sentPlain.headers['copilot-vision-request']).toBeUndefined();
+  });
+
   it('names the login command when GitHub rejects the stored token, which has nothing to refresh it', async () => {
     const api = await serve((_request, response) => json(response, 401, { message: 'Bad credentials' }));
     vendor(api, { 'github-copilot': { access: 'gho_revoked', refresh: '', expires: 0 } });
@@ -110,7 +133,41 @@ describe('Copilot requests', () => {
       code: 'LOGIN_REQUIRED',
       message: 'GitHub Copilot rejected the stored token (401: Bad credentials); run `npx e2e login github-copilot`',
     });
-    expect(api.requests).toHaveLength(1);
+    // The model listing is asked once before the call; the rejected token is not retried.
+    expect(api.requests.filter((request) => request.url === '/chat/completions')).toHaveLength(1);
+  });
+
+  it('calls an enabled model Copilot lists only over Responses through the Responses API, with no server storage', async () => {
+    let seen: Received | undefined;
+    const api = await serve((request, response) => {
+      if (request.url === '/models') {
+        json(response, 200, {
+          data: [{ id: 'gpt-6-luna', vendor: 'OpenAI', policy: { state: 'enabled' }, supported_endpoints: ['/responses', 'ws:/responses'], capabilities: { type: 'chat' } }],
+        });
+        return;
+      }
+      seen = request;
+      json(response, 200, {
+        id: 'resp_1',
+        created_at: 1,
+        model: 'gpt-6-luna',
+        output: [{ type: 'message', id: 'msg_1', role: 'assistant', content: [{ type: 'output_text', text: 'luna', annotations: [] }] }],
+        usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 },
+      });
+    });
+    vendor(api, { 'github-copilot': { access: 'gho_x', refresh: '', expires: 0 } });
+    const model = copilot('gpt-6-luna');
+    // Before the first call the delegate reads as its chat model; the listing settles it.
+    expect(model).toMatchObject({ provider: 'github-copilot.chat', modelId: 'gpt-6-luna' });
+    const result = await generateText({ model, prompt: 'color?' });
+    expect(result.text).toBe('luna');
+    expect(model.provider).toBe('github-copilot.responses');
+    expect(seen!.url).toBe('/responses');
+    expect(seen!.headers['authorization']).toBe('Bearer gho_x');
+    const body = JSON.parse(seen!.body) as { input?: unknown; messages?: unknown; store?: unknown };
+    expect(Array.isArray(body.input)).toBe(true);
+    expect(body.messages).toBeUndefined();
+    expect(body.store).toBe(false);
   });
 
   it('lists the chat models of the plan through the login, leaving embeddings out and marking what copilot() cannot use', async () => {
@@ -145,9 +202,37 @@ describe('Copilot requests', () => {
       { id: 'claude-haiku-4.5', detail: 'Anthropic' },
       { id: 'claude-opus-5', detail: 'Anthropic, not enabled' },
       { id: 'claude-fable-5.1', detail: 'Anthropic, not enabled' },
-      { id: 'claude-messages', detail: 'Anthropic, no chat completions' },
-      { id: 'gpt-6-luna', detail: 'OpenAI, no chat completions' },
-      { id: 'gpt-5.5', detail: 'OpenAI, not enabled, no chat completions' },
+      { id: 'claude-messages', detail: 'Anthropic, no chat or responses' },
+      { id: 'gpt-6-luna', detail: 'OpenAI' },
+      { id: 'gpt-5.5', detail: 'OpenAI, not enabled, no chat or responses' },
     ]);
+  });
+});
+
+describe('Copilot endpoint selection', () => {
+  const listing = (data: unknown, status = 200) => async () => new Response(JSON.stringify({ data }), { status, headers: { 'content-type': 'application/json' } });
+  const entry = (supported: string[], policy?: { state: string }) => ({ id: 'm', ...(policy === undefined ? {} : { policy }), supported_endpoints: supported });
+
+  it('keeps a model that lists chat completions on chat, unchanged', async () => {
+    expect(await copilotProtocolFor('m', listing([entry(['/chat/completions', '/v1/messages'])]))).toBe('chat');
+  });
+
+  it('routes an enabled model served only over Responses to the Responses API', async () => {
+    expect(await copilotProtocolFor('m', listing([{ id: 'm', policy: { state: 'enabled' }, supported_endpoints: ['/responses', 'ws:/responses'] }]))).toBe('responses');
+  });
+
+  it('falls back to chat whenever the endpoint cannot be established', async () => {
+    const cases: Array<[string, unknown, number]> = [
+      ['chat named beside responses', [entry(['/responses', '/chat/completions'], { state: 'enabled' })], 200],
+      ['no supported_endpoints', [{ id: 'm', policy: { state: 'enabled' } }], 200],
+      ['responses but not enabled', [entry(['/responses'], { state: 'disabled' })], 200],
+      ['responses with no policy at all', [entry(['/responses'])], 200],
+      ['another endpoint only', [entry(['/v1/messages'], { state: 'enabled' })], 200],
+      ['the model is not in the listing', [{ id: 'other', policy: { state: 'enabled' }, supported_endpoints: ['/responses'] }], 200],
+      ['the listing is not ok', [entry(['/responses'], { state: 'enabled' })], 500],
+    ];
+    for (const [name, data, status] of cases) expect(await copilotProtocolFor('m', listing(data, status)), name).toBe('chat');
+    expect(await copilotProtocolFor('m', async () => { throw new Error('offline'); })).toBe('chat');
+    expect(await copilotProtocolFor('m', async () => new Response('not json'))).toBe('chat');
   });
 });

@@ -6,10 +6,11 @@
  */
 
 import { createOpenAI } from '@ai-sdk/openai';
-import type { LanguageModelV4, LanguageModelV4CallOptions } from '@ai-sdk/provider';
+import type { LanguageModelV4 } from '@ai-sdk/provider';
 import { createOAuthFetch } from './fetch.ts';
 import { USER_AGENT, loginHint } from './providers.ts';
 import { createCodexProvider } from './providers/openai.ts';
+import { withoutServerStorage } from './responses.ts';
 import { defaultCredentialStore } from './store.ts';
 
 export function chatgpt(modelId: string): LanguageModelV4 {
@@ -20,27 +21,4 @@ export function chatgpt(modelId: string): LanguageModelV4 {
   });
   // The key header is removed per request; the value only satisfies the constructor.
   return withoutServerStorage(createOpenAI({ apiKey: 'oauth', fetch, name: 'chatgpt' }).responses(modelId));
-}
-
-/**
- * Tells the SDK what the Codex backend enforces: nothing is stored server
- * side. Believing storage is on, the SDK refers back to an earlier turn's
- * reasoning by id (`item_reference`), which the backend then cannot find; told
- * it is off, the SDK carries the encrypted reasoning itself.
- */
-function withoutServerStorage(model: LanguageModelV4): LanguageModelV4 {
-  const storeOff = (options: LanguageModelV4CallOptions): LanguageModelV4CallOptions => ({
-    ...options,
-    providerOptions: { ...options.providerOptions, openai: { ...options.providerOptions?.['openai'], store: false } },
-  });
-  return {
-    specificationVersion: model.specificationVersion,
-    provider: model.provider,
-    modelId: model.modelId,
-    get supportedUrls() {
-      return model.supportedUrls;
-    },
-    doGenerate: (options) => model.doGenerate(storeOff(options)),
-    doStream: (options) => model.doStream(storeOff(options)),
-  };
 }

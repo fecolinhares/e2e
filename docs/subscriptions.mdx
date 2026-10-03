@@ -52,17 +52,17 @@ const agent = { model: chatgpt('gpt-6-luna') };
   <Tab title="GitHub Copilot">
 <CodeGroup>
 ```bash npm
-npm install -D ai @ai-sdk/openai-compatible
+npm install -D ai @ai-sdk/openai-compatible @ai-sdk/openai
 npx e2e login github-copilot
 ```
 
 ```bash pnpm
-pnpm add -D ai @ai-sdk/openai-compatible
+pnpm add -D ai @ai-sdk/openai-compatible @ai-sdk/openai
 pnpm exec e2e login github-copilot
 ```
 
 ```bash bun
-bun add -d ai @ai-sdk/openai-compatible
+bun add -d ai @ai-sdk/openai-compatible @ai-sdk/openai
 bunx e2e login github-copilot
 ```
 </CodeGroup>
@@ -135,9 +135,14 @@ Copilot also lists models that `copilot()` cannot call, and marks them:
 - `not enabled`: the model is off for your plan. Turn it on in your Copilot
   settings on GitHub, or ask your organization admin if they manage your
   seat.
-- `no chat completions`: Copilot serves the model only over other APIs,
-  mostly its Responses API. `copilot()` uses chat completions, so pick
-  another model.
+- `no chat or responses`: Copilot serves the model only over APIs `copilot()`
+  does not speak, such as Anthropic's Messages API, so pick another model.
+
+At call time `copilot()` picks the endpoint from the model's entry in this
+same listing: chat completions for most models, Copilot's Responses API for
+the ones served only there. The Responses call runs through
+`@ai-sdk/openai`, so install it beside `@ai-sdk/openai-compatible` to use
+those models.
 
 ## Sign-in help
 

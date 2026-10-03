@@ -52,8 +52,10 @@ suites that consume the built packages the way a user would.
     the `act` socket with a queue executor so every MCP call is a harness
     action), `src/oauth/` subscription sign-in (the `e2e login`, `logout`,
     and `models` commands and the `e2e/oauth/*` model constructors; each
-    constructor subpath is the only place its `@ai-sdk/*` optional peer is
-    imported, so the CLI boots without them). The constructors and the CLI
+    constructor subpath is the place its `@ai-sdk/*` optional peers are
+    imported, and the Copilot constructor loads `@ai-sdk/openai` lazily, only
+    for the Responses models, so the CLI boots without any of them). The
+    constructors and the CLI
     are the whole public surface: the flows, stores, and fetch behind them
     are module-private, not a library for other products. `tests/live/` holds hand-run
     checks that need a stored login and are never part of `pnpm test`.
