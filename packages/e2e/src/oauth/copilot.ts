@@ -36,7 +36,7 @@ export function copilot(modelId: string): LanguageModelV4 {
       const { createOpenAI } = await import('@ai-sdk/openai');
       return withoutServerStorage(createOpenAI({ apiKey: 'oauth', baseURL: COPILOT_API_URL, fetch, name: 'github-copilot' }).responses(modelId));
     },
-    () => copilotProtocolFor(modelId, fetch),
+    (signal) => copilotProtocolFor(modelId, fetch, signal),
   );
 }
 
@@ -47,15 +47,21 @@ export function copilot(modelId: string): LanguageModelV4 {
  * cannot be read resolves to chat, so the delegate never blocks construction
  * and never changes what used to work.
  */
-function protocolDelegate(chat: LanguageModelV4, responses: () => Promise<LanguageModelV4>, choose: () => Promise<CopilotProtocol>): LanguageModelV4 {
+function protocolDelegate(chat: LanguageModelV4, responses: () => Promise<LanguageModelV4>, choose: (signal: AbortSignal | undefined) => Promise<CopilotProtocol>): LanguageModelV4 {
   let pending: Promise<LanguageModelV4> | undefined;
   let resolved: LanguageModelV4 | undefined;
-  const delegate = (): Promise<LanguageModelV4> => {
+  const delegate = (signal: AbortSignal | undefined): Promise<LanguageModelV4> => {
+    // A choice that cannot be made must not be remembered: an aborted or failed lookup clears
+    // `pending` so the next attempt asks again, instead of every retry waiting on a promise
+    // that never settles. The signal reaches the lookup, so a stalled listing can be cancelled.
     pending ??= (async () => {
-      const protocol = await choose();
+      const protocol = await choose(signal);
       resolved = protocol === 'responses' ? await responses() : chat;
       return resolved;
-    })();
+    })().catch((error: unknown) => {
+      pending = undefined;
+      throw error;
+    });
     return pending;
   };
   return {
@@ -69,7 +75,7 @@ function protocolDelegate(chat: LanguageModelV4, responses: () => Promise<Langua
     get supportedUrls() {
       return resolved?.supportedUrls ?? chat.supportedUrls;
     },
-    doGenerate: async (options) => (await delegate()).doGenerate(options),
-    doStream: async (options) => (await delegate()).doStream(options),
+    doGenerate: async (options) => (await delegate(options.abortSignal)).doGenerate(options),
+    doStream: async (options) => (await delegate(options.abortSignal)).doStream(options),
   };
 }

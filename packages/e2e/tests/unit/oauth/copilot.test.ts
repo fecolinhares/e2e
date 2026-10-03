@@ -210,6 +210,17 @@ describe('Copilot requests', () => {
 });
 
 describe('Copilot endpoint selection', () => {
+  it('rejects an aborted lookup instead of reading it as a missing endpoint', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    // A fetch that honours the signal the way the real one does: aborted means rejected.
+    const onAbort = (request: Request) =>
+      request.signal.aborted ? Promise.reject(new Error('aborted')) : new Promise<Response>(() => {});
+    await expect(copilotProtocolFor('m', onAbort as never, controller.signal)).rejects.toThrow('aborted');
+    // Without a signal the same lookup would have been read as a missing endpoint.
+    expect(await copilotProtocolFor('m', (async () => new Response(JSON.stringify({ data: [] }), { status: 200 })) as never)).toBe('chat');
+  });
+
   const listing = (data: unknown, status = 200) => async () => new Response(JSON.stringify({ data }), { status, headers: { 'content-type': 'application/json' } });
   const entry = (supported: string[], policy?: { state: string }) => ({ id: 'm', ...(policy === undefined ? {} : { policy }), supported_endpoints: supported });
 

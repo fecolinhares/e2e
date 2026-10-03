@@ -219,16 +219,20 @@ export type CopilotProtocol = 'chat' | 'responses';
  * chat. Responses is chosen only when the entry names it and nothing else
  * and Copilot marks the model enabled: an endpoint list alone must not
  * invent access a plan has not granted, and a model that is not enabled
- * keeps failing the way it does today.
+ * keeps failing the way it does today. An aborted lookup is not a missing endpoint: it
+ * rejects, so the caller learns the listing was never read.
  */
-export async function copilotProtocolFor(modelId: string, fetch: FetchFunction): Promise<CopilotProtocol> {
+export async function copilotProtocolFor(modelId: string, fetch: FetchFunction, signal?: AbortSignal): Promise<CopilotProtocol> {
   try {
-    const response = await fetch(`${COPILOT_API_URL}/models`);
+    // The ternary is the conditional-property idiom: `exactOptionalPropertyTypes` rejects an
+    // explicit `undefined`, and the linter rejects a redundant spread around it.
+    const response = await fetch(new Request(`${COPILOT_API_URL}/models`, signal === undefined ? {} : { signal }));
     if (!response.ok) return 'chat';
     const payload = (await response.json()) as { data?: unknown };
     const models = Array.isArray(payload.data) ? (payload.data as CopilotModel[]) : [];
     return copilotProtocol(models.find((model) => model.id === modelId)) ?? 'chat';
-  } catch {
+  } catch (error) {
+    if (signal?.aborted === true) throw error;
     return 'chat';
   }
 }
