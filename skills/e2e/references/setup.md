@@ -65,10 +65,11 @@ in CI.
 
 Switching to Copilot: install `ai`, `@ai-sdk/openai-compatible`, and
 `@ai-sdk/openai`, set `model: copilot('<id>')` from `e2e/oauth/copilot`, run
-`npx e2e login github-copilot`. `copilot()` calls most models over chat
-completions and the rest over Copilot's Responses API, choosing from the
-plan's model listing; `npx e2e models github-copilot` marks the models it
-cannot call.
+`npx e2e login github-copilot`. `copilot()` calls a model over chat completions, or
+over Copilot's Responses API when the plan serves that model only there, choosing
+per model from the plan's listing. `npx e2e models github-copilot` marks the models
+it cannot call at all: those served only over an API `copilot()` does not speak, and
+those the plan has not enabled.
 
 ## The config
 
