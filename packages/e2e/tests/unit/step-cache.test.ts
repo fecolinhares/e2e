@@ -560,8 +560,8 @@ describe('StepTraceSession', () => {
       }
       // Measured from the hand-off, the wait is the margin alone and stays
       // there. On `main` each run adds the replay's own wait and the executor's
-      // turn, so the same three runs read 24 519, 35 021, 45 522 and keep going
-      // until the recorder's ceiling.
+      // turn, so the numbers keep climbing until the recorder clamps them at
+      // 120 000.
       for (let index = 2; index < recorded.length; index += 1) {
         expect(recorded[index]!).toBeLessThan(recorded[index - 1]! + EXECUTOR_TURN_MS);
       }
