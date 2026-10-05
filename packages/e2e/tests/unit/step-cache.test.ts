@@ -563,7 +563,7 @@ describe('StepTraceSession', () => {
       // turn, so the numbers keep climbing until the recorder clamps them at
       // 120 000.
       for (let index = 2; index < recorded.length; index += 1) {
-        expect(recorded[index]!).toBeLessThan(recorded[index - 1]! + EXECUTOR_TURN_MS);
+        expect(recorded[index]!).toBeLessThanOrEqual(recorded[index - 1]!);
       }
     },
     60_000,

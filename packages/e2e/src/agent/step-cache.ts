@@ -161,6 +161,8 @@ export class StepTraceSession {
   private startedMs = Date.now();
   /** When the replay handed the step to the executor, if it did. */
   private handedOffMs: number | undefined;
+  /** When the executor finished; its turn is not app settling time. */
+  private executorCompletedMs: number | undefined;
   /**
    * The screen before any action, captured only when this step may write: the
    * staged trace's end anchors are the delta between this and the passing
@@ -341,6 +343,7 @@ export class StepTraceSession {
   async conclude(outcome: StepOutcome, verdictSummary: string | undefined): Promise<void> {
     const recorder = this.recorder;
     if (recorder === undefined) return;
+    if (this.handedOffMs !== undefined) this.executorCompletedMs = Date.now();
     switch (outcome) {
       case 'no-verdict':
         return;
@@ -603,11 +606,10 @@ export class StepTraceSession {
       // plus room for a slower day: the budget a replay waits for the anchors
       // to return. Measured from the last action, not the step's start: the
       // model's thinking time before that action is no reason for a replay,
-      // which does not think, to wait. After a hand-off it is measured from
-      // the hand-off instead — the replay's own end wait and the executor's
-      // run sit between the last action and the staging, and counting them
-      // would grow the budget on every run until it hits its ceiling.
-      endWaitMs: Date.now() - Math.max(recorder.lastActionAtMs ?? this.startedMs, this.handedOffMs ?? 0) + END_WAIT_MARGIN_MS,
+      // which does not think, to wait. On a hand-off, start after the executor
+      // finishes: neither the replay's wait nor the executor's turn is app
+      // settling time.
+      endWaitMs: Date.now() - Math.max(recorder.lastActionAtMs ?? this.startedMs, this.executorCompletedMs ?? this.handedOffMs ?? 0) + END_WAIT_MARGIN_MS,
       keyedBy: this.claim.context,
     });
     if (trace === undefined) return 'skipped';
