@@ -570,6 +570,41 @@ describe('StepTraceSession', () => {
     60_000,
   );
 
+  it('keeps app settling time after an executor action following an action-failed hand-off', async () => {
+    vi.useFakeTimers();
+    vi.setTimerTickMode('nextTimerAsync');
+    const context = entryContext({
+      actions: [
+        { name: 'navigate', url: '/first', summary: 'opened first' },
+        { name: 'navigate', url: '/second', summary: 'opened second' },
+      ],
+      startPath: '/start',
+    });
+    let session: StepTraceSession | undefined;
+    let replayed = 0;
+    const host: StepCacheHost = {
+      ...makeHost(['/start'], [[], [savedMarker]], true),
+      remainingMs: () => 600_000,
+      actions: {
+        navigate: async (url: string) => {
+          replayed += 1;
+          if (replayed === 1) session?.record({ name: 'navigate', url });
+          else throw new Error('simulated second replay action failure');
+        },
+      } as unknown as ExecutorActions,
+    };
+    session = makeSession(context, host);
+    await session.begin();
+    expect(session.replayedPrefix?.stopReason).toBe('action-failed');
+    await vi.advanceTimersByTimeAsync(EXECUTOR_TURN_MS);
+    session.record({ name: 'tap', node: redacted({ ref: { id: 'save', revision: 'r2' }, role: 'button', name: 'Save' }) });
+    await vi.advanceTimersByTimeAsync(500);
+    await session.conclude('passed', 'saved after the hand-off');
+    const recordedWait = stagedTrace(context).endWaitMs ?? 0;
+    expect(recordedWait).toBeGreaterThan(END_WAIT_MARGIN_MS);
+    expect(recordedWait).toBeLessThan(END_WAIT_MARGIN_MS + SETTLED_READ_MS);
+  });
+
   it('evicts instead of re-staging when the executor had to repair after an end-mismatch', async () => {
     const deleted: string[] = [];
     const context = entryContext({ endPath: '/customers', endAnchors: [savedAnchor] });
