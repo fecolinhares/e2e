@@ -159,6 +159,8 @@ export class StepTraceSession {
   private prefix: ReplayedPrefix | undefined;
   private startPath: string | undefined;
   private startedMs = Date.now();
+  /** When the replay handed the step to the executor, if it did. */
+  private handedOffMs: number | undefined;
   /**
    * The screen before any action, captured only when this step may write: the
    * staged trace's end anchors are the delta between this and the passing
@@ -540,6 +542,7 @@ export class StepTraceSession {
   }
 
   private handOff(outcome: ReplayOutcome, stopReason: HandOffReason, detail: string | undefined): void {
+    this.handedOffMs = Date.now();
     if (stopReason === 'end-mismatch') this.actionsAtEndMismatch = this.recorder?.recordedCount ?? 0;
     this.prefix = {
       replayedActions: outcome.summaries,
@@ -600,8 +603,11 @@ export class StepTraceSession {
       // plus room for a slower day: the budget a replay waits for the anchors
       // to return. Measured from the last action, not the step's start: the
       // model's thinking time before that action is no reason for a replay,
-      // which does not think, to wait.
-      endWaitMs: Date.now() - (recorder.lastActionAtMs ?? this.startedMs) + END_WAIT_MARGIN_MS,
+      // which does not think, to wait. After a hand-off it is measured from
+      // the hand-off instead — the replay's own end wait and the executor's
+      // run sit between the last action and the staging, and counting them
+      // would grow the budget on every run until it hits its ceiling.
+      endWaitMs: Date.now() - Math.max(recorder.lastActionAtMs ?? this.startedMs, this.handedOffMs ?? 0) + END_WAIT_MARGIN_MS,
       keyedBy: this.claim.context,
     });
     if (trace === undefined) return 'skipped';
