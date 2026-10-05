@@ -83,9 +83,16 @@ function fakeContext(read: AgentCacheContext['store']['read']): AgentCacheContex
 function makeHost(
   paths: (string | undefined)[],
   screens: (readonly SemanticNode[])[] = [[]],
+  holdLastPath = false,
 ): StepCacheHost {
+  let lastPath: string | undefined;
   const nextScreen = async () => {
-    const path = paths.shift();
+    const next = paths.length > 0 ? paths.shift() : undefined;
+    // A script that runs out describes a surface with no URL. `holdLastPath`
+    // describes a surface that stays where it was instead, which is what a
+    // replay's own settling poll sees: it re-reads a location it already has.
+    if (next !== undefined) lastPath = next;
+    const path = next ?? (holdLastPath ? lastPath : undefined);
     return {
       kind: 'semantic' as const,
       nodes: nodeMap((screens.length > 1 ? screens.shift() : screens[0]) ?? []),
@@ -125,10 +132,13 @@ function recordingSession(
   cache: AgentCacheContext,
   paths: (string | undefined)[],
   screens: (readonly SemanticNode[])[] = [[]],
+  remainingMs = 50,
+  holdLastPath = false,
 ): StepTraceSession {
   let session: StepTraceSession | undefined;
   const host: StepCacheHost = {
-    ...makeHost(paths, screens),
+    ...makeHost(paths, screens, holdLastPath),
+    remainingMs: () => remainingMs,
     actions: {
       navigate: async (url: string) => session?.record({ name: 'navigate', url }),
     } as unknown as ExecutorActions,
@@ -137,9 +147,27 @@ function recordingSession(
   return session;
 }
 
+/** Runs the clock until `work` settles, so every timer it arms still fires. */
+async function withClock<T>(work: Promise<T>): Promise<T> {
+  // `runAllTimersAsync` also runs the timers the next await arms, which is the
+  // point: a hand-off and a staging read each wait on their own. The promise
+  // races a marker so the loop can tell settled from still-waiting, and `break`
+  // on the marker leaves the loop with a condition it does own.
+  for (;;) {
+    const marker = Symbol('pending');
+    const state: unknown = await Promise.race([work, Promise.resolve(marker)]);
+    if (state !== marker) break;
+    await vi.runAllTimersAsync();
+  }
+  return work;
+}
+
 const noEntry = fakeContext(async () => {
   throw new Error('no entry');
 });
+
+/** What the executor costs between the hand-off and its verdict: a model call and its looks. */
+const EXECUTOR_TURN_MS = 4_000;
 
 /** The recording a staged entry would write; an entry staged to keep fails the test. */
 function stagedTrace(context: AgentCacheContext, index = 0): ActionTrace {
@@ -503,6 +531,43 @@ describe('StepTraceSession', () => {
     expect(context.staged).toHaveLength(1);
     expect(stagedTrace(context).actions.map((action) => action.name)).toEqual(['navigate']);
   });
+
+  it(
+    're-records no longer end wait than the entry it healed',
+    async () => {
+      // The entry the previous run left behind, already grown once: measured
+      // from the last replayed action, the replay's own end wait and the
+      // executor's run would both land in the next entry, and the budget would
+      // grow until it reached its ceiling. The clock is faked so the replay
+      // burns its settling backoff without the wall-clock cost — the numbers
+      // below are then arithmetic, reproducible on any machine.
+      vi.useFakeTimers();
+      let endWaitMs = 200;
+      const recorded = [endWaitMs];
+      for (let run = 0; run < 3; run += 1) {
+        const context = entryContext({ endPath: '/customers', endAnchors: [savedAnchor], endWaitMs });
+        // Room to spend the recorded wait: the default host's 50 ms budget
+        // would cut the replay's end wait short and there would be nothing to
+        // accumulate.
+        const session = recordingSession(context, ['/pricing', '/customers', '/customers'], [[]], 600_000, true);
+        await withClock(session.begin());
+        expect(session.replayedPrefix?.stopReason).toBe('end-mismatch');
+        // The executor's turn: a model call and the looks that follow it.
+        await vi.advanceTimersByTimeAsync(EXECUTOR_TURN_MS);
+        await withClock(session.conclude('passed', 'the customers page is open'));
+        endWaitMs = stagedTrace(context).endWaitMs ?? 0;
+        recorded.push(endWaitMs);
+      }
+      // Measured from the hand-off, the wait is the margin alone and stays
+      // there. On `main` each run adds the replay's own wait and the executor's
+      // turn, so the same three runs read 24 519, 35 021, 45 522 and keep going
+      // until the recorder's ceiling.
+      for (let index = 2; index < recorded.length; index += 1) {
+        expect(recorded[index]!).toBeLessThan(recorded[index - 1]! + EXECUTOR_TURN_MS);
+      }
+    },
+    60_000,
+  );
 
   it('evicts instead of re-staging when the executor had to repair after an end-mismatch', async () => {
     const deleted: string[] = [];
