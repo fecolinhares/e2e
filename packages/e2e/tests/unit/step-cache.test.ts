@@ -169,6 +169,13 @@ const noEntry = fakeContext(async () => {
 /** What the executor costs between the hand-off and its verdict: a model call and its looks. */
 const EXECUTOR_TURN_MS = 4_000;
 
+/** The margin `step-cache` adds to a measured end wait, mirrored here so the
+ * bound below moves when the runtime's moves. */
+const END_WAIT_MARGIN_MS = 10_000;
+
+/** What staging's own read costs, and room for the timer to round. */
+const SETTLED_READ_MS = 2_000;
+
 /** The recording a staged entry would write; an entry staged to keep fails the test. */
 function stagedTrace(context: AgentCacheContext, index = 0): ActionTrace {
   const staged = context.staged[index];
@@ -558,12 +565,19 @@ describe('StepTraceSession', () => {
         endWaitMs = stagedTrace(context).endWaitMs ?? 0;
         recorded.push(endWaitMs);
       }
-      // Measured from the hand-off, the wait is the margin alone and stays
-      // there. On `main` each run adds the replay's own wait and the executor's
+      // The first re-record is always larger: the entry it healed was 200 ms and
+      // what gets written is the margin. From there on it holds steady. On
+      // `main` each run instead adds the replay's own wait and the executor's
       // turn, so the numbers keep climbing until the recorder clamps them at
-      // 120 000.
+      // 120 000 — 28 000, 42 000, 56 000 here.
       for (let index = 2; index < recorded.length; index += 1) {
         expect(recorded[index]!).toBeLessThanOrEqual(recorded[index - 1]!);
+      }
+      // A steady wait can still be an inflated one: measured from the hand-off
+      // instead of the executor's end, every entry keeps the executor's whole
+      // turn, which the growth check above cannot see.
+      for (const recordedWait of recorded.slice(1)) {
+        expect(recordedWait).toBeLessThan(END_WAIT_MARGIN_MS + SETTLED_READ_MS);
       }
     },
     60_000,
