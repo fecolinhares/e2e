@@ -606,10 +606,15 @@ export class StepTraceSession {
       // plus room for a slower day: the budget a replay waits for the anchors
       // to return. Measured from the last action, not the step's start: the
       // model's thinking time before that action is no reason for a replay,
-      // which does not think, to wait. On a hand-off, start after the executor
-      // finishes: neither the replay's wait nor the executor's turn is app
-      // settling time.
-      endWaitMs: Date.now() - Math.max(recorder.lastActionAtMs ?? this.startedMs, this.executorCompletedMs ?? this.handedOffMs ?? 0) + END_WAIT_MARGIN_MS,
+      // which does not think, to wait. After a hand-off, the executor's last
+      // action is the baseline when it acted; otherwise its completion is the
+      // baseline. The replay and executor turn are not app settling time.
+      endWaitMs:
+        Date.now() -
+        (this.handedOffMs === undefined || (recorder.lastActionAtMs ?? 0) > this.handedOffMs
+          ? (recorder.lastActionAtMs ?? this.startedMs)
+          : (this.executorCompletedMs ?? this.handedOffMs)) +
+        END_WAIT_MARGIN_MS,
       keyedBy: this.claim.context,
     });
     if (trace === undefined) return 'skipped';

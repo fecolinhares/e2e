@@ -147,21 +147,6 @@ function recordingSession(
   return session;
 }
 
-/** Runs the clock until `work` settles, so every timer it arms still fires. */
-async function withClock<T>(work: Promise<T>): Promise<T> {
-  // `runAllTimersAsync` also runs the timers the next await arms, which is the
-  // point: a hand-off and a staging read each wait on their own. The promise
-  // races a marker so the loop can tell settled from still-waiting, and `break`
-  // on the marker leaves the loop with a condition it does own.
-  for (;;) {
-    const marker = Symbol('pending');
-    const state: unknown = await Promise.race([work, Promise.resolve(marker)]);
-    if (state !== marker) break;
-    await vi.runAllTimersAsync();
-  }
-  return work;
-}
-
 const noEntry = fakeContext(async () => {
   throw new Error('no entry');
 });
@@ -549,6 +534,7 @@ describe('StepTraceSession', () => {
       // burns its settling backoff without the wall-clock cost — the numbers
       // below are then arithmetic, reproducible on any machine.
       vi.useFakeTimers();
+      vi.setTimerTickMode('nextTimerAsync');
       let endWaitMs = 200;
       const recorded = [endWaitMs];
       for (let run = 0; run < 3; run += 1) {
@@ -557,11 +543,11 @@ describe('StepTraceSession', () => {
         // would cut the replay's end wait short and there would be nothing to
         // accumulate.
         const session = recordingSession(context, ['/pricing', '/customers', '/customers'], [[]], 600_000, true);
-        await withClock(session.begin());
+        await session.begin();
         expect(session.replayedPrefix?.stopReason).toBe('end-mismatch');
         // The executor's turn: a model call and the looks that follow it.
         await vi.advanceTimersByTimeAsync(EXECUTOR_TURN_MS);
-        await withClock(session.conclude('passed', 'the customers page is open'));
+        await session.conclude('passed', 'the customers page is open');
         endWaitMs = stagedTrace(context).endWaitMs ?? 0;
         recorded.push(endWaitMs);
       }
@@ -577,6 +563,7 @@ describe('StepTraceSession', () => {
       // instead of the executor's end, every entry keeps the executor's whole
       // turn, which the growth check above cannot see.
       for (const recordedWait of recorded.slice(1)) {
+        expect(recordedWait).toBeGreaterThanOrEqual(END_WAIT_MARGIN_MS);
         expect(recordedWait).toBeLessThan(END_WAIT_MARGIN_MS + SETTLED_READ_MS);
       }
     },
