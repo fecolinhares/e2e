@@ -83,16 +83,9 @@ function fakeContext(read: AgentCacheContext['store']['read']): AgentCacheContex
 function makeHost(
   paths: (string | undefined)[],
   screens: (readonly SemanticNode[])[] = [[]],
-  holdLastPath = false,
 ): StepCacheHost {
-  let lastPath: string | undefined;
   const nextScreen = async () => {
-    const next = paths.length > 0 ? paths.shift() : undefined;
-    // A script that runs out describes a surface with no URL. `holdLastPath`
-    // describes a surface that stays where it was instead, which is what a
-    // replay's own settling poll sees: it re-reads a location it already has.
-    if (next !== undefined) lastPath = next;
-    const path = next ?? (holdLastPath ? lastPath : undefined);
+    const path = paths.shift();
     return {
       kind: 'semantic' as const,
       nodes: nodeMap((screens.length > 1 ? screens.shift() : screens[0]) ?? []),
@@ -132,13 +125,10 @@ function recordingSession(
   cache: AgentCacheContext,
   paths: (string | undefined)[],
   screens: (readonly SemanticNode[])[] = [[]],
-  remainingMs = 50,
-  holdLastPath = false,
 ): StepTraceSession {
   let session: StepTraceSession | undefined;
   const host: StepCacheHost = {
-    ...makeHost(paths, screens, holdLastPath),
-    remainingMs: () => remainingMs,
+    ...makeHost(paths, screens),
     actions: {
       navigate: async (url: string) => session?.record({ name: 'navigate', url }),
     } as unknown as ExecutorActions,
@@ -527,41 +517,44 @@ describe('StepTraceSession', () => {
   it(
     're-records no longer end wait than the entry it healed',
     async () => {
-      // The entry the previous run left behind, already grown once: measured
-      // from the last replayed action, the replay's own end wait and the
-      // executor's run would both land in the next entry, and the budget would
-      // grow until it reached its ceiling. The clock is faked so the replay
-      // burns its settling backoff without the wall-clock cost — the numbers
-      // below are then arithmetic, reproducible on any machine.
       vi.useFakeTimers();
       vi.setTimerTickMode('nextTimerAsync');
       let endWaitMs = 200;
       const recorded = [endWaitMs];
       for (let run = 0; run < 3; run += 1) {
         const context = entryContext({ endPath: '/customers', endAnchors: [savedAnchor], endWaitMs });
-        // Room to spend the recorded wait: the default host's 50 ms budget
-        // would cut the replay's end wait short and there would be nothing to
-        // accumulate.
-        const session = recordingSession(context, ['/pricing', '/customers', '/customers'], [[]], 600_000, true);
+        let session: StepTraceSession | undefined;
+        const paths = ['/pricing', '/customers'];
+        let currentPath: string | undefined;
+        // This test host holds the replay on its end route while the fake clock settles it.
+        const host: StepCacheHost = {
+          observe: async () => {
+            const nextPath = paths.shift();
+            if (nextPath !== undefined) currentPath = nextPath;
+            return {
+              kind: 'semantic',
+              nodes: nodeMap([]),
+              viewport: { width: 1280, height: 720 },
+              ...(currentPath === undefined ? {} : { path: currentPath }),
+            };
+          },
+          actions: { navigate: async (url: string) => session?.record({ name: 'navigate', url }) } as unknown as ExecutorActions,
+          signal: new AbortController().signal,
+          remainingMs: () => 600_000,
+          traceEligible: true,
+          replaying: () => undefined,
+        };
+        session = makeSession(context, host);
         await session.begin();
         expect(session.replayedPrefix?.stopReason).toBe('end-mismatch');
-        // The executor's turn: a model call and the looks that follow it.
         await vi.advanceTimersByTimeAsync(EXECUTOR_TURN_MS);
         await session.conclude('passed', 'the customers page is open');
         endWaitMs = stagedTrace(context).endWaitMs ?? 0;
         recorded.push(endWaitMs);
       }
-      // The first re-record is always larger: the entry it healed was 200 ms and
-      // what gets written is the margin. From there on it holds steady. On
-      // `main` each run instead adds the replay's own wait and the executor's
-      // turn, so the numbers keep climbing until the recorder clamps them at
-      // 120 000 — 28 000, 42 000, 56 000 here.
       for (let index = 2; index < recorded.length; index += 1) {
         expect(recorded[index]!).toBeLessThanOrEqual(recorded[index - 1]!);
       }
-      // A steady wait can still be an inflated one: measured from the hand-off
-      // instead of the executor's end, every entry keeps the executor's whole
-      // turn, which the growth check above cannot see.
       for (const recordedWait of recorded.slice(1)) {
         expect(recordedWait).toBeGreaterThanOrEqual(END_WAIT_MARGIN_MS);
         expect(recordedWait).toBeLessThan(END_WAIT_MARGIN_MS + SETTLED_READ_MS);
@@ -582,9 +575,21 @@ describe('StepTraceSession', () => {
     });
     let session: StepTraceSession | undefined;
     let replayed = 0;
+    const paths = ['/start'];
+    const screens: (readonly SemanticNode[])[] = [[], [savedMarker]];
+    let currentPath: string | undefined;
+    // This test host holds the failed replay on its route for staging.
     const host: StepCacheHost = {
-      ...makeHost(['/start'], [[], [savedMarker]], true),
-      remainingMs: () => 600_000,
+      observe: async () => {
+        const nextPath = paths.shift();
+        if (nextPath !== undefined) currentPath = nextPath;
+        return {
+          kind: 'semantic',
+          nodes: nodeMap((screens.length > 1 ? screens.shift() : screens[0]) ?? []),
+          viewport: { width: 1280, height: 720 },
+          ...(currentPath === undefined ? {} : { path: currentPath }),
+        };
+      },
       actions: {
         navigate: async (url: string) => {
           replayed += 1;
@@ -592,6 +597,10 @@ describe('StepTraceSession', () => {
           else throw new Error('simulated second replay action failure');
         },
       } as unknown as ExecutorActions,
+      signal: new AbortController().signal,
+      remainingMs: () => 600_000,
+      traceEligible: true,
+      replaying: () => undefined,
     };
     session = makeSession(context, host);
     await session.begin();
