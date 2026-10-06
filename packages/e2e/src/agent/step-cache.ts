@@ -564,6 +564,13 @@ export class StepTraceSession {
     };
   }
 
+  /** Returns the app-settling baseline: the executor's verdict or, if it acted, its last action. */
+  private endWaitBaselineMs(recorder: TraceRecorder): number {
+    const lastActionAtMs = recorder.lastActionAtMs ?? this.startedMs;
+    if (this.handedOffMs === undefined || (recorder.lastActionAtMs ?? 0) > this.handedOffMs) return lastActionAtMs;
+    return this.executorCompletedMs ?? this.handedOffMs;
+  }
+
   /**
    * Stages the recorded trace for attempt-end settlement. The write is
    * deferred, not immediate: the trace is confirmed or evicted at attempt end
@@ -609,12 +616,7 @@ export class StepTraceSession {
       // which does not think, to wait. After a hand-off, the executor's last
       // action is the baseline when it acted; otherwise its completion is the
       // baseline. The replay and executor turn are not app settling time.
-      endWaitMs:
-        Date.now() -
-        (this.handedOffMs === undefined || (recorder.lastActionAtMs ?? 0) > this.handedOffMs
-          ? (recorder.lastActionAtMs ?? this.startedMs)
-          : (this.executorCompletedMs ?? this.handedOffMs)) +
-        END_WAIT_MARGIN_MS,
+      endWaitMs: Date.now() - this.endWaitBaselineMs(recorder) + END_WAIT_MARGIN_MS,
       keyedBy: this.claim.context,
     });
     if (trace === undefined) return 'skipped';
