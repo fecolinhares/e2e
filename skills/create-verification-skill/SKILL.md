@@ -28,9 +28,9 @@ observe.
 
 | Question | Where the answer is | What it decides |
 | --- | --- | --- |
-| Surface | What a user touches. A web UI, an iOS or Android app, an API | One skill per primary surface; name the others for a later run. Web goes through `@e2e-dev/web`, iOS and Android through `@e2e-dev/mobile`. An API with no UI still gets a `web()` target with `app.url` and `app.command` so the runner starts it, and its tests take only `app` and use `fetch` (topic `writing-tests`). A native desktop app has no e2e engine yet, say so and stop |
+| Surface | What a user touches. A web UI, an iOS or Android app, an API | One skill per primary surface; name the others for a later run. Web goes through `@e2e-dev/web`, iOS and Android through `@e2e-dev/mobile`. An API with no UI still gets a `web()` target with `app.url` and `app.command` so the runner starts it, and its tests take only `app` and use `fetch` (topic `writing-tests`). A native desktop app has no e2e engine yet, say so and stop. So does a project where no engine has a surface to drive: a CLI, a library, or a batch job, and a desktop frontend whose only browser output is a native-runtime notice. An HTTP service with no UI is not one of those; this row drives it through `web()`. Stop on the observation, not after a write: name the entry point, the engine that cannot drive it, and that no skill was generated |
 | Run | The documented dev command, its ports, env vars, seed data, auth | The target's `app.command` (topic `setup`). A dev server that compiles a route on first visit reads as broken to an agent, so prefer a production build command when the repo has one |
-| e2e state | `e2e.config.ts`, the `tests` glob, `e2e` in `package.json`, `.agents/skills/e2e/`, the MCP server in `.mcp.json` or `.cursor/mcp.json`, and any Playwright or Cypress suite | Nothing there means `npx e2e init` first (topic `setup`), which also installs the skill and registers the server. An existing Playwright or Cypress suite is the best source of locators, seeds, and sign-in steps; read it. A config with no model runs the deterministic steps and the MCP tools, and nothing else |
+| e2e state | `e2e.config.ts`, the `tests` glob, `e2e` in `package.json`, `.agents/skills/e2e/`, the MCP server in `.mcp.json` or `.cursor/mcp.json`, and any Playwright or Cypress suite | Nothing there, once the Surface row found something an engine can drive, means `npx e2e init` first (topic `setup`), which also installs the skill and registers the server. An existing Playwright or Cypress suite is the best source of locators, seeds, and sign-in steps; read it. A config with no model runs the deterministic steps and the MCP tools, and nothing else |
 | Observe | The trace page, screenshots, video, the report, and what the app leaves behind in files, rows, sent messages, logs | The side-effect stores the Evidence section names. Find them now |
 | Isolate | Can two instances run side by side? | Port `0` in `app.url` gives each run its own app; `command.reuseExisting: true` attaches to one already running on the port. A shared instance that cannot be duplicated (one database, one simulator) becomes a rule in the generated skill. Refusing to double-drive it beats corrupting the user's session |
 | Name | The package name or the repo name | `<app>` in `verify-<app>`, lowercase, no scope |
@@ -134,6 +134,9 @@ paths. Running the map keeps it honest. When a route or label changes and
 a test fails, the feature file changes in the same commit. Rerun this skill
 when the app grows a feature the map lacks; section 1 says how an existing
 map is treated.
+
+A project with no supported surface stops in section 1 instead, and this
+handover reports what you observed and that nothing was written.
 
 ## Rules
 
