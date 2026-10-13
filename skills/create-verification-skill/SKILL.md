@@ -113,9 +113,15 @@ Run its own instructions end to end once, from a shell in the project.
    --config <bug-bash config> --agent <persona> --max-steps 3 --output
    .e2e/bugbash/<slug>`, plus `--session <name>` when the charter names
    one. Read its `Findings` and triage; do not verify every finding now.
-   This proves the model, the config, and the output directory, not the
-   app. Without a model, skip this step and say in the handover that the
-   bug bash is unproven.
+   Then read the run's `run.explore` in `report.json`: an ending of
+   `aborted`, or steps that ran a generic survey instead of the mapped
+   charter, leaves the bug bash unproven and the handover says so. The
+   steps prove the charter ran, not the exit code: `1` is also what a run
+   that executed no step exits with. A `--max-steps` ending states the
+   coverage the run reached. This
+   proves the model, the config, the charter, and the output directory, not
+   the app. Without a model, skip this step and say in the handover that
+   the bug bash is unproven.
 4. Cleanup, then confirm the evidence still exists at the named location.
    A cleanup that eats the proof fails this step.
 
