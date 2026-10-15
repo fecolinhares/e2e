@@ -58,6 +58,8 @@ export interface TraceCacheKey {
   readonly agent: string;
   /** SHA-256 of the agent's redacted context (its `context` then the test's `agentContext`), or of the empty string. */
   readonly agentContextDigest: string;
+  /** The configured agent's model id, when one exists, so a model swap does not replay silently. */
+  readonly agentModel?: string;
   readonly policyVersion: string;
 }
 
@@ -66,6 +68,8 @@ export interface CacheAgentIdentity {
   readonly name: string;
   /** The context the agent reads, already redacted. */
   readonly context: string | undefined;
+  /** The configured model's id, so a model swap never replays another model's trace silently. */
+  readonly model?: string;
 }
 
 /** Identity of the target/engine/app a trace was recorded against. */
@@ -187,6 +191,7 @@ export function buildTraceCacheKey(parts: {
     appIdentity: parts.target.appIdentity,
     agent: parts.agent.name,
     agentContextDigest: sha256Hex(parts.agent.context ?? ''),
+    ...(parts.agent.model === undefined ? {} : { agentModel: parts.agent.model }),
     policyVersion: parts.policyVersion,
   };
 }
