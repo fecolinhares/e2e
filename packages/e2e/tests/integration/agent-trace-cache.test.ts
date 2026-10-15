@@ -113,7 +113,7 @@ describe('trace cache: divergence hands the step over mid-step', () => {
       appUrl: app.url,
       config: {
         tests: 'tests/**/*.e2e.ts',
-        agents: { default: { executor: twoTapExecutor(record) } },
+        agents: { default: { executor: twoTapExecutor(record), model: unreachableModel } },
         cache: 'read-write' as const,
       },
     });
@@ -192,7 +192,7 @@ describe('trace cache: unconfirmed traces are withheld and poisoned entries evic
       appUrl: app.url,
       config: {
         tests: 'tests/**/*.e2e.ts',
-        agents: { default: { executor: twoTapExecutor(record) } },
+        agents: { default: { executor: twoTapExecutor(record), model: unreachableModel } },
         cache: 'read-write' as const,
       },
     };
@@ -284,7 +284,7 @@ describe('trace cache: a model that never answered implicates nothing', () => {
       appUrl: app.url,
       config: {
         tests: 'tests/**/*.e2e.ts',
-        agents: { default: { executor: twoTapExecutor(record) } },
+        agents: { default: { executor: twoTapExecutor(record), model: unreachableModel } },
         cache: 'read-write' as const,
       },
     });
@@ -321,7 +321,7 @@ describe('trace cache: a model that never answered implicates nothing', () => {
       appUrl: app.url,
       config: {
         tests: 'tests/**/*.e2e.ts',
-        agents: { default: { model: unreachableModel } },
+        agents: { default: { executor: twoTapExecutor(record), model: unreachableModel } },
         cache: 'read-write' as const,
       },
     });
@@ -492,7 +492,7 @@ describe('trace cache: modes', () => {
       appUrl: app.url,
       config: {
         tests: 'tests/**/*.e2e.ts',
-        agents: { default: { executor: twoTapExecutor(record) } },
+        agents: { default: { executor: twoTapExecutor(record), model: unreachableModel } },
         cache: 'read-write' as const,
       },
       runOptions: { noCache },

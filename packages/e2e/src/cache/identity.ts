@@ -202,8 +202,8 @@ export function traceCacheKeyHash(key: TraceCacheKey): string {
 }
 
 /** The parts of a key outside the step's own identity, as an entry records them (`ActionTrace.keyedBy`). */
-export function keyContext(key: TraceKeyContext): TraceKeyContext {
-  return Object.fromEntries(KEY_CONTEXT_FIELDS.map((field) => [field, key[field]])) as TraceKeyContext;
+export function keyContext(key: TraceCacheKey): TraceKeyContext {
+  return Object.fromEntries(KEY_CONTEXT_FIELDS.map((field) => [field, field === 'agentModel' ? (key.agentModel ?? '') : key[field]])) as TraceKeyContext;
 }
 
 /** How each part of a key's context reads in a sentence, and whether its value means anything to a reader. */
@@ -216,6 +216,7 @@ const KEY_CONTEXT_WORDS: Readonly<Record<keyof TraceKeyContext, { readonly name:
   engineSpiVersion: { name: 'the engine contract', shown: true },
   appIdentity: { name: "the app's identity (app.identity, else its URL) or environment", shown: false },
   agentContextDigest: { name: "the agent's context (its context, or the test's agentContext)", shown: false },
+  agentModel: { name: 'the configured model', shown: true },
 };
 
 /**

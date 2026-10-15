@@ -115,6 +115,7 @@ describe('keyContextChanges', () => {
     engineSpiVersion: 1,
     appIdentity: 'a'.repeat(64),
     agentContextDigest: 'c'.repeat(64),
+    agentModel: '',
   } as const;
 
   it('names what changed since the recording, with the values a reader can act on', () => {

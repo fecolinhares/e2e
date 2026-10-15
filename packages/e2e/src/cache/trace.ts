@@ -446,6 +446,7 @@ export const KEY_CONTEXT_FIELDS = [
   'engineSpiVersion',
   'appIdentity',
   'agentContextDigest',
+  'agentModel',
 ] as const;
 
 /** The one numeric part; every other is text. */
@@ -465,7 +466,9 @@ function readKeyContext(document: unknown): TraceKeyContext | undefined {
     const value: string | number | undefined =
       field === 'engineSpiVersion'
         ? typeof raw[field] === 'number' && Number.isSafeInteger(raw[field]) ? raw[field] : undefined
-        : readBoundedText(raw[field], MAX_TRACE_DESCRIPTOR_CHARS);
+        : field === 'agentModel'
+          ? (raw[field] === undefined ? '' : readBoundedText(raw[field], MAX_TRACE_DESCRIPTOR_CHARS) ?? '')
+          : readBoundedText(raw[field], MAX_TRACE_DESCRIPTOR_CHARS);
     if (value === undefined) return undefined;
     read[field] = value;
   }
