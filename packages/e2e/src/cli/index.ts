@@ -25,6 +25,7 @@ import { CACHE_DIR_DESCRIPTION, registerCacheCommand } from './cache.ts';
 import { docsLine, examples, helpSection, pc } from './help.ts';
 import { ERROR_CODE_LIMIT, feedback, FEEDBACK_LIMITS, FEEDBACK_TYPES, type FeedbackReport } from './feedback.ts';
 import { guide } from './guide.ts';
+import { doctor, type DoctorOptions } from './doctor.ts';
 import { init } from './init.ts';
 import { addInitOptions, checkInitFlags, type InitFlagValues } from './init/flags.ts';
 import { mcp } from './mcp.ts';
@@ -517,6 +518,16 @@ function createProgram(version: string, telemetry: Telemetry): Command {
     .addHelpText('after', ['', examples(['e2e guide', 'e2e guide writing-tests']), '', docsLine('/reference/cli#e2e-guide')].join('\n'))
     .action((topic: string | undefined) => {
       process.exitCode = guide(topic);
+    });
+
+  program
+    .command('doctor')
+    .summary('preflight a host for running e2e')
+    .description('Check Node.js, project config, and required model credentials without starting an app or model. Writes one JSON object the host can parse.')
+    .option('--json', 'write JSON to stdout (default)')
+    .option('--config <path>', 'config file (default: the nearest e2e.config.ts)')
+    .action(async (options: DoctorOptions) => {
+      process.exitCode = await doctor(options);
     });
 
   program
