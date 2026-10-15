@@ -90,8 +90,9 @@ agent. Each of these changes causes a miss:
 - switching to another engine, or changing the project id or the app's
   identity.
 
-Changing the model doesn't cause a miss, and neither does upgrading the
-engine: a node the new version resolves differently misses at replay.
+Changing the model now causes a miss (the recording names the model it ran
+under), and upgrading theengine misses too: a node the new version resolves
+differently misses at replay.
 
 A timestamp or a fresh email address would miss on every run. Wrap such
 values in `unique()`, and the runner puts in the current value at replay:
