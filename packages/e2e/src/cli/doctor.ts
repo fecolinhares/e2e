@@ -13,9 +13,9 @@ export interface DoctorOptions {
   readonly cwd?: string;
 }
 
-export type DoctorStatus = 'pass' | 'fail' | 'skip';
+type DoctorStatus = 'pass' | 'fail' | 'skip';
 
-export interface DoctorCheck {
+interface DoctorCheck {
   readonly id: string;
   readonly status: DoctorStatus;
   readonly message?: string;
