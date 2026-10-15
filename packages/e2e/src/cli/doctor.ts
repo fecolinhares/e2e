@@ -60,11 +60,9 @@ async function runDoctor(options: DoctorOptions, cwd: string): Promise<DoctorRes
   checks.push(nodeCheck());
 
   let config;
-  let discoveredPath: string | undefined;
   let projectRoot = cwd;
   try {
     const discovered = discoverConfig(cwd, options.config);
-    discoveredPath = discovered.configPath;
     projectRoot = discovered.projectRoot;
     if (discovered.configPath === undefined) {
       checks.push({
