@@ -24,7 +24,7 @@ export interface DoctorCheck {
   readonly code?: string;
 }
 
-export interface DoctorResult {
+interface DoctorResult {
   readonly version: string;
   readonly ok: boolean;
   readonly checks: readonly DoctorCheck[];
@@ -68,6 +68,7 @@ async function runDoctor(options: DoctorOptions, cwd: string): Promise<DoctorRes
       checks.push({
         id: 'config',
         status: 'fail',
+        code: 'CONFIG_NOT_FOUND',
         message: 'no config file found; run e2e init or pass --config <path>',
       });
       return { version: packageVersion(import.meta.url, '../../package.json', '0.0.0'), ok: false, checks };
@@ -80,6 +81,7 @@ async function runDoctor(options: DoctorOptions, cwd: string): Promise<DoctorRes
       checks.push({
         id: 'config',
         status: 'fail',
+        code: (cause as Error & { code?: string })?.code ?? 'CONFIG_LOAD_FAILED',
         message: cause instanceof Error ? cause.message : String(cause),
       });
       return { version: packageVersion(import.meta.url, '../../package.json', '0.0.0'), ok: false, checks };
@@ -97,6 +99,7 @@ async function runDoctor(options: DoctorOptions, cwd: string): Promise<DoctorRes
       checks.push({
         id: 'config',
         status: 'fail',
+        code: (cause as Error & { code?: string })?.code ?? 'CONFIG_RESOLVE_FAILED',
         message: cause instanceof Error ? cause.message : String(cause),
       });
       return { version: packageVersion(import.meta.url, '../../package.json', '0.0.0'), ok: false, checks };
@@ -122,6 +125,7 @@ async function runDoctor(options: DoctorOptions, cwd: string): Promise<DoctorRes
     checks.push({
       id: 'config',
       status: 'fail',
+      code: (cause as Error & { code?: string })?.code ?? 'CONFIG_ERROR',
       message: cause instanceof Error ? cause.message : String(cause),
     });
   }
